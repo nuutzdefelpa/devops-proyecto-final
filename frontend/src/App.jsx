@@ -206,7 +206,7 @@ export default function App() {
     return (
       <div className="auth-wrapper">
         <div className="card auth-card">
-          <h1>{authMode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}</h1>
+          <h1>{authMode === 'login' ? 'Error Intencional' : 'Crear Cuenta'}</h1>
           <p className="subtitle">Panel de Gestión — Proyecto DevOps</p>
 
           {error && (
