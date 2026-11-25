@@ -1,0 +1,70 @@
+services:
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    container_name: devops-openobserve
+    restart: unless-stopped
+    environment:
+      - ZO_ROOT_USER_EMAIL=${ZO_ROOT_USER_EMAIL:-admin@proyecto.com}
+      - ZO_ROOT_USER_PASSWORD=${ZO_ROOT_USER_PASSWORD:-DevOps2026!}
+      - ZO_DATA_DIR=/data
+    ports:
+      - "5080:5080"
+    volumes:
+      - openobserve_data:/data
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    container_name: devops-otel-collector
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+    environment:
+      - ZO_ROOT_USER_EMAIL=${ZO_ROOT_USER_EMAIL:-admin@proyecto.com}
+      - ZO_ROOT_USER_PASSWORD=${ZO_ROOT_USER_PASSWORD:-DevOps2026!}
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - /proc:/hostfs/proc:ro
+      - /sys:/hostfs/sys:ro
+
+  infra-monitor:
+    build: ./infra-monitor
+    container_name: devops-infra-monitor
+    restart: unless-stopped
+    depends_on:
+      - otel-collector
+    environment:
+      - OTEL_METRICS_URL=http://otel-collector:4318/v1/metrics
+      - INTERVAL_MS=10000
+    volumes:
+      - /proc:/hostfs/proc:ro
+      - /sys:/hostfs/sys:ro
+
+  backend:
+    build: ./backend
+    container_name: devops-backend
+    restart: unless-stopped
+    depends_on:
+      - otel-collector
+    environment:
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET:-devops_secret_key_2026}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@proyecto.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-Admin123!}
+      - OTEL_SERVICE_NAME=devops-backend
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
+    volumes:
+      - sqlite_data:/app/data
+
+  frontend:
+    build: ./frontend
+    container_name: devops-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-8080}:80"
+
+volumes:
+  sqlite_data:
+  openobserve_data:

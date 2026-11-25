@@ -1,0 +1,181 @@
+name: CI/CD Pipeline - Pruebas y Despliegue a EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Pruebas Automatizadas (Jest + Playwright)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar código del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias y ejecutar pruebas de Backend (Jest)
+        id: jest_tests
+        working-directory: ./backend
+        run: |
+          npm install
+          npm test
+
+      - name: Levantar aplicación en Docker para pruebas E2E
+        id: start_app
+        run: |
+          OTEL_EXPORTER_OTLP_ENDPOINT="" docker compose up -d --build --no-deps backend frontend
+          echo "Esperando a que la app responda en http://localhost:8080/api/health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/api/health > /dev/null; then
+              echo "Aplicación lista."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "La aplicación no respondió a tiempo."
+          docker compose logs
+          exit 1
+
+      - name: Instalar Playwright y ejecutar suite E2E (Chromium, Firefox y WebKit)
+        id: playwright_tests
+        working-directory: ./tests-e2e
+        run: |
+          npm install
+          npx playwright install --with-deps
+          npm test
+
+      - name: Reportar resultado de pruebas a OpenObserve (RF-03)
+        if: always()
+        env:
+          OO_URL: ${{ secrets.OPENOBSERVE_URL }}
+          OO_USER: ${{ secrets.OPENOBSERVE_USER }}
+          OO_PASS: ${{ secrets.OPENOBSERVE_PASS }}
+          JOB_STATUS: ${{ job.status }}
+          JEST_OUTCOME: ${{ steps.jest_tests.outcome }}
+          PLAYWRIGHT_OUTCOME: ${{ steps.playwright_tests.outcome }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$OO_URL" ]; then
+            echo "OPENOBSERVE_URL no configurado todavía; omitiendo envío."
+            exit 0
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg event_type "ci_test_execution" \
+            --arg status "$JOB_STATUS" \
+            --arg jest_status "${JEST_OUTCOME:-skipped}" \
+            --arg playwright_status "${PLAYWRIGHT_OUTCOME:-skipped}" \
+            --arg commit_sha "${{ github.sha }}" \
+            --arg commit_short "${GITHUB_SHA::7}" \
+            --arg commit_message "$COMMIT_MSG" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg actor "${{ github.actor }}" \
+            --arg repository "${{ github.repository }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg run_url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '[{
+              timestamp: $timestamp,
+              event_type: $event_type,
+              status: $status,
+              jest_status: $jest_status,
+              playwright_status: $playwright_status,
+              commit_sha: $commit_sha,
+              commit_short: $commit_short,
+              commit_message: $commit_message,
+              branch: $branch,
+              actor: $actor,
+              repository: $repository,
+              run_id: $run_id,
+              run_url: $run_url,
+              ssh_blocked: ($status != "success")
+            }]')
+
+          curl -sS -f -X POST "${OO_URL}/api/default/cicd_pipeline/_json" \
+            -u "${OO_USER}:${OO_PASS}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+
+      - name: Detener contenedores temporales del runner
+        if: always()
+        run: docker compose down -v
+
+  deploy:
+    name: Despliegue Automático en AWS EC2
+    needs: test
+    if: success()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Conectar por SSH a EC2 y actualizar contenedores
+        id: ec2_deploy
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key.pem
+          chmod 600 ~/.ssh/ec2_key.pem
+
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key.pem "${EC2_USER}@${EC2_HOST}" << 'EOF'
+            set -e
+            cd ~/devops-proyecto-final
+            git fetch origin main
+            git reset --hard origin/main
+            APP_PORT=80 docker compose up -d --build
+            docker image prune -f
+            docker compose ps
+          EOF
+
+      - name: Reportar evento de despliegue en EC2 a OpenObserve (RF-03)
+        if: always()
+        env:
+          OO_URL: ${{ secrets.OPENOBSERVE_URL }}
+          OO_USER: ${{ secrets.OPENOBSERVE_USER }}
+          OO_PASS: ${{ secrets.OPENOBSERVE_PASS }}
+          DEPLOY_OUTCOME: ${{ steps.ec2_deploy.outcome }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$OO_URL" ]; then
+            echo "OPENOBSERVE_URL no configurado todavía; omitiendo envío."
+            exit 0
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg event_type "ec2_deployment" \
+            --arg status "${DEPLOY_OUTCOME:-failure}" \
+            --arg commit_sha "${{ github.sha }}" \
+            --arg commit_short "${GITHUB_SHA::7}" \
+            --arg commit_message "$COMMIT_MSG" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg actor "${{ github.actor }}" \
+            --arg repository "${{ github.repository }}" \
+            --arg target_host "$EC2_HOST" \
+            --arg run_id "${{ github.run_id }}" \
+            '[{
+              timestamp: $timestamp,
+              event_type: $event_type,
+              status: $status,
+              commit_sha: $commit_sha,
+              commit_short: $commit_short,
+              commit_message: $commit_message,
+              branch: $branch,
+              actor: $actor,
+              repository: $repository,
+              target_host: $target_host,
+              run_id: $run_id
+            }]')
+
+          curl -sS -f -X POST "${OO_URL}/api/default/cicd_pipeline/_json" \
+            -u "${OO_USER}:${OO_PASS}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"

@@ -1,0 +1,31 @@
+{
+  "name": "devops-backend",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "jest --runInBand --detectOpenHandles"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api-logs": "^0.223.2",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.223.2",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.223.2",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.223.2",
+    "@opentelemetry/instrumentation-express": "^0.71.1",
+    "@opentelemetry/instrumentation-http": "^0.223.2",
+    "@opentelemetry/sdk-logs": "^0.223.2",
+    "@opentelemetry/sdk-metrics": "^2.12.1",
+    "@opentelemetry/sdk-node": "^0.223.2",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}

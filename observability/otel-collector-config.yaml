@@ -1,0 +1,46 @@
+extensions:
+  basicauth/openobserve:
+    client_auth:
+      username: ${env:ZO_ROOT_USER_EMAIL}
+      password: ${env:ZO_ROOT_USER_PASSWORD}
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    root_path: /hostfs
+    collection_interval: 10s
+    scrapers:
+      cpu: {}
+      memory: {}
+      network: {}
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  otlphttp/openobserve:
+    endpoint: http://openobserve:5080/api/default
+    auth:
+      authenticator: basicauth/openobserve
+    headers:
+      stream-name: default
+
+service:
+  extensions: [basicauth/openobserve]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/openobserve]
+    metrics:
+      receivers: [otlp, hostmetrics]
+      processors: [batch]
+      exporters: [otlphttp/openobserve]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/openobserve]
