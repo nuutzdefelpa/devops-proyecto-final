@@ -207,7 +207,7 @@ export default function App() {
       <div className="auth-wrapper">
         <div className="card auth-card">
           <h1>{authMode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}</h1>
-<p className="subtitle">Panel de Gestión — Proyecto DevOps version en clase</p>
+<p className="subtitle">Panel de Gestión — Proyecto DevOps version en claseeeeee</p>
 
           {error && (
             <div className="alert alert-error" data-testid="auth-error">
